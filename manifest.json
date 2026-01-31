@@ -4,7 +4,7 @@
 	"version": "0.1.0",
 	"minAppVersion": "1.5.0",
 	"description": "Query files by properties, render their checklist items as a grouped list.",
-	"author": "Your Name",
-	"authorUrl": "https://github.com/yourusername",
+	"author": "ajgxyz",
+	"authorUrl": "https://github.com/ajgxyz",
 	"isDesktopOnly": false
 }
