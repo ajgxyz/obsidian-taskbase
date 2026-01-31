@@ -1,0 +1,266 @@
+/* ============================================================================
+   TaskBase Plugin Styles
+   ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+   View Container
+   ---------------------------------------------------------------------------- */
+
+.taskbase-view {
+  padding: var(--size-4-3);
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ----------------------------------------------------------------------------
+   Loading State
+   ---------------------------------------------------------------------------- */
+
+.taskbase-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ----------------------------------------------------------------------------
+   Error State
+   ---------------------------------------------------------------------------- */
+
+.taskbase-error {
+  padding: var(--size-4-4);
+  margin: var(--size-4-3);
+  background: var(--background-modifier-error);
+  border-radius: var(--radius-s);
+  color: var(--text-error);
+}
+
+/* ----------------------------------------------------------------------------
+   Empty State
+   ---------------------------------------------------------------------------- */
+
+.taskbase-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-4-8) var(--size-4-4);
+  text-align: center;
+}
+
+.taskbase-empty-icon {
+  color: var(--text-faint);
+  margin-bottom: var(--size-4-4);
+  opacity: 0.5;
+}
+
+.taskbase-empty-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
+.taskbase-empty-text {
+  color: var(--text-muted);
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  margin-bottom: var(--size-4-2);
+}
+
+.taskbase-empty-hint {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* ----------------------------------------------------------------------------
+   File Groups
+   ---------------------------------------------------------------------------- */
+
+.taskbase-group {
+  margin-bottom: var(--size-4-4);
+}
+
+.taskbase-group:last-child {
+  margin-bottom: 0;
+}
+
+.taskbase-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-2);
+  margin-bottom: var(--size-4-1);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.taskbase-group-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.taskbase-group-name {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskbase-group-count {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  background: var(--background-modifier-hover);
+  padding: 0 var(--size-4-2);
+  border-radius: var(--radius-s);
+  min-width: 1.5em;
+  text-align: center;
+}
+
+/* ----------------------------------------------------------------------------
+   Task List
+   ---------------------------------------------------------------------------- */
+
+.taskbase-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* ----------------------------------------------------------------------------
+   Nested Tasks (Hierarchical Display)
+   ---------------------------------------------------------------------------- */
+
+/* Nested task list indentation */
+.taskbase-task-list.taskbase-nested {
+  margin-left: var(--size-4-4);
+  margin-top: var(--size-4-1);
+  padding-left: var(--size-4-2);
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+/* Reduce nested task padding slightly for visual hierarchy */
+.taskbase-nested .taskbase-task {
+  padding: var(--size-4-1) 0;
+}
+
+/* Visual indicator for deeply nested tasks */
+.taskbase-nested .taskbase-nested {
+  border-left-color: var(--background-modifier-border-hover);
+}
+
+/* ----------------------------------------------------------------------------
+   Task Item
+   ---------------------------------------------------------------------------- */
+
+.taskbase-task {
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  transition: background-color 100ms ease;
+}
+
+.taskbase-task:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Row container for checkbox + content */
+.taskbase-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+}
+
+/* Checkbox wrapper */
+.taskbase-checkbox-wrapper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+/* Checkbox */
+.taskbase-checkbox {
+  cursor: pointer;
+}
+
+/* Task content */
+.taskbase-task-content {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* Task text */
+.taskbase-task-text {
+  color: var(--text-normal);
+  word-wrap: break-word;
+}
+
+/* Completed state */
+.taskbase-task.is-completed .taskbase-task-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* Focus styles for accessibility */
+.taskbase-checkbox:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.taskbase-task-content:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+/* ----------------------------------------------------------------------------
+   Scrollbar (optional, for consistency)
+   ---------------------------------------------------------------------------- */
+
+.taskbase-view::-webkit-scrollbar {
+  width: 8px;
+}
+
+.taskbase-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.taskbase-view::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.taskbase-view::-webkit-scrollbar-thumb:hover {
+  background: var(--background-modifier-border-hover);
+}
+
+/* ----------------------------------------------------------------------------
+   Print Styles
+   ---------------------------------------------------------------------------- */
+
+@media print {
+  .taskbase-view {
+    padding: 0;
+  }
+
+  .taskbase-group-header:hover,
+  .taskbase-task:hover {
+    background: none;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Reduced Motion
+   ---------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .taskbase-group-header,
+  .taskbase-task {
+    transition: none;
+  }
+}

@@ -1,0 +1,12 @@
+# Build output
+main.js
+
+# Dependencies
+node_modules/
+
+# IDE
+.idea/
+*.code-workspace
+
+# macOS
+.DS_Store
