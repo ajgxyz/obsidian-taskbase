@@ -2,7 +2,7 @@
  * TaskList component - renders grouped tasks
  */
 
-import { App } from 'obsidian';
+import { App, Component, MarkdownRenderer } from 'obsidian';
 
 // ============================================================================
 // Types
@@ -63,6 +63,7 @@ export class TaskList {
 
   private groups: TaskGroup[] = [];
   private collapsedGroups: Set<string>;
+  private component: Component;
 
   constructor(
     app: App,
@@ -80,6 +81,8 @@ export class TaskList {
       ...options
     };
     this.collapsedGroups = options.collapsedGroups ?? new Set();
+    this.component = new Component();
+    this.component.load();
   }
 
   /**
@@ -100,6 +103,10 @@ export class TaskList {
    * Render the task list
    */
   private render(): void {
+    this.component.unload();
+    this.component = new Component();
+    this.component.load();
+
     this.container.empty();
 
     if (this.groups.length === 0) {
@@ -278,11 +285,14 @@ export class TaskList {
     // Task content
     const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
 
-    // Task text
+    // Task text — render inline markdown (bold, italic, links)
     const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
-    textEl.setText(task.$text);
+    void MarkdownRenderer.render(
+      this.app, task.$text, textEl, task.$file, this.component
+    );
+    this.attachLinkHandler(textEl, task.$file);
 
-    // Click handler for text
+    // Click handler for text (only fires if click wasn't on a link)
     contentEl.addEventListener('click', () => {
       this.callbacks.onTaskClick(task);
     });
@@ -312,10 +322,13 @@ export class TaskList {
     const markerEl = rowEl.createDiv({ cls: 'taskbase-bullet-marker' });
     markerEl.setText('\u2022');
 
-    // Content
+    // Content — render inline markdown (bold, italic, links)
     const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
     const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
-    textEl.setText(item.$text);
+    void MarkdownRenderer.render(
+      this.app, item.$text, textEl, item.$file, this.component
+    );
+    this.attachLinkHandler(textEl, item.$file);
 
     contentEl.addEventListener('click', () => {
       this.callbacks.onTaskClick(item);
@@ -346,6 +359,34 @@ export class TaskList {
    */
   setShowBullets(value: boolean): void {
     this.options.showBullets = value;
+  }
+
+  /**
+   * Attach click handler to rendered links so they open targets
+   * instead of triggering the parent task-click handler.
+   */
+  private attachLinkHandler(textEl: HTMLElement, sourcePath: string): void {
+    textEl.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('a');
+      if (!target) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const href = target.getAttribute('data-href') ?? target.getAttribute('href');
+      if (!href) return;
+
+      if (target.hasAttribute('data-href')) {
+        // Internal wiki link — open via Obsidian
+        void this.app.workspace.openLinkText(href, sourcePath);
+      } else if (href.startsWith('http://') || href.startsWith('https://')) {
+        // External link — open in browser
+        window.open(href, '_blank');
+      } else {
+        // Other internal link
+        void this.app.workspace.openLinkText(href, sourcePath);
+      }
+    });
   }
 
   /**
@@ -429,6 +470,7 @@ export class TaskList {
    * Destroy and clean up
    */
   destroy(): void {
+    this.component.unload();
     this.container.empty();
     this.groups = [];
   }

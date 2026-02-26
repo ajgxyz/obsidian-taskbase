@@ -337,9 +337,27 @@
 }
 
 /* Completed state */
-.taskbase-task.is-completed .taskbase-task-text {
+.taskbase-task.is-completed .taskbase-task-text,
+.taskbase-task.is-completed .taskbase-task-text * {
   color: var(--text-muted);
   text-decoration: line-through;
+}
+
+/* Inline markdown rendering — strip <p> wrapper added by MarkdownRenderer */
+.taskbase-task-text p {
+  display: inline;
+  margin: 0;
+}
+
+/* Rendered links within task text */
+.taskbase-task-text a {
+  text-decoration: none;
+  color: var(--link-color);
+  cursor: pointer;
+}
+
+.taskbase-task-text a:hover {
+  text-decoration: underline;
 }
 
 /* Focus styles for accessibility */
