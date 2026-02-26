@@ -1,10 +1,13 @@
 /**
  * TaskBaseView - Main view component for .taskbase files
+ *
+ * Extends TextFileView so Obsidian automatically handles file loading,
+ * saving, and change detection for .taskbase JSON config files.
  */
 
-import { ItemView, WorkspaceLeaf, TFile } from 'obsidian';
+import { TextFileView, WorkspaceLeaf } from 'obsidian';
 import type TaskBasePlugin from './main';
-import { parseConfig, DEFAULT_CONFIG, type TaskBaseConfig } from './config';
+import { parseConfig, serializeConfig, DEFAULT_CONFIG, type TaskBaseConfig } from './config';
 import { buildQuery } from './query';
 import { toggleTask, type ToggleableTask } from './toggle';
 import { TaskList, type TaskItem } from './ui/task-list';
@@ -15,6 +18,8 @@ import { TaskList, type TaskItem } from './ui/task-list';
 
 export const VIEW_TYPE_TASKBASE = 'taskbase-view';
 const DEBOUNCE_MS = 500;
+const DATACORE_POLL_MS = 200;
+const DATACORE_TIMEOUT_MS = 10_000;
 
 // ============================================================================
 // Types
@@ -32,18 +37,20 @@ export type { TaskItem } from './ui/task-list';
 // View Implementation
 // ============================================================================
 
-export class TaskBaseView extends ItemView {
+export class TaskBaseView extends TextFileView {
   private plugin: TaskBasePlugin;
   private config: TaskBaseConfig = DEFAULT_CONFIG;
-  private configFile: TFile | null = null;
 
   // Datacore subscription
   private updateRef?: EventRef;
   private debounceTimer?: number;
+  private retryInterval?: number;
+  private hasResults = false;
 
   // UI containers
   private loadingEl!: HTMLElement;
   private errorEl!: HTMLElement;
+  private toolbarEl!: HTMLElement;
   private taskListEl!: HTMLElement;
 
   // Task list component
@@ -59,15 +66,68 @@ export class TaskBaseView extends ItemView {
   }
 
   getDisplayText(): string {
-    if (this.configFile) {
-      return this.configFile.basename;
-    }
-    return 'Task view';
+    return this.file?.basename ?? 'Task view';
   }
 
   getIcon(): string {
     return 'check-square';
   }
+
+  canAcceptExtension(extension: string): boolean {
+    return extension === 'taskbase';
+  }
+
+  // ============================================================================
+  // TextFileView Lifecycle
+  // ============================================================================
+
+  /**
+   * Called by TextFileView when file content is loaded or changed externally.
+   * @param data - The file content as a string
+   * @param clear - true when opening a new file, false when file was modified externally
+   */
+  setViewData(data: string, clear: boolean): void {
+    console.debug('TaskBase: setViewData called, clear:', clear);
+
+    const result = parseConfig(data);
+    if (!result.success) {
+      this.showError(`Invalid config: ${result.error}`);
+      return;
+    }
+
+    this.config = result.config!;
+
+    if (clear) {
+      // New file opened — disconnect old Datacore subscription
+      this.disconnectDatacore();
+    }
+
+    this.connectDatacore();
+  }
+
+  /**
+   * Called by TextFileView when saving — return current file contents.
+   */
+  getViewData(): string {
+    return serializeConfig(this.config);
+  }
+
+  /**
+   * Called when switching away from the current file.
+   */
+  clear(): void {
+    this.disconnectDatacore();
+    this.config = DEFAULT_CONFIG;
+    this.hasResults = false;
+    this.loadingEl?.show();
+    this.errorEl?.hide();
+    this.toolbarEl?.hide();
+    this.taskListEl?.hide();
+  }
+
+  // ============================================================================
+  // View Open / Close
+  // ============================================================================
 
   async onOpen(): Promise<void> {
     // Set up container structure
@@ -81,6 +141,9 @@ export class TaskBaseView extends ItemView {
     this.errorEl = this.contentEl.createDiv({ cls: 'taskbase-error' });
     this.errorEl.hide();
 
+    this.toolbarEl = this.contentEl.createDiv({ cls: 'taskbase-toolbar' });
+    this.toolbarEl.hide();
+
     this.taskListEl = this.contentEl.createDiv({ cls: 'taskbase-list' });
     this.taskListEl.hide();
 
@@ -91,43 +154,19 @@ export class TaskBaseView extends ItemView {
       {
         onToggle: (task) => { void this.handleToggle(task); },
         onTaskClick: (task) => this.handleTaskClick(task),
-        onFileClick: (filePath) => this.handleFileClick(filePath)
+        onFileClick: (filePath) => this.handleFileClick(filePath),
+        onGroupToggle: (filePath, collapsed) => this.handleGroupToggle(filePath, collapsed),
+        onCollapseAll: () => this.handleCollapseAll(),
+        onExpandAll: () => this.handleExpandAll()
       }
     );
-
-    // Load config from file
-    await this.loadConfig();
-
-    // Watch for config file changes
-    this.registerConfigWatcher();
-
-    // Wait for Datacore
-    const dc = window.datacore;
-    if (!dc) {
-      this.showError('Datacore plugin is required');
-      return;
-    }
-
-    if (!dc.core.initialized) {
-      this.loadingEl.setText('Waiting for datacore to initialize');
-      // Wait for initialization
-      const initRef = dc.core.on('initialized', () => {
-        dc.core.offref(initRef);
-        this.onDatacoreReady();
-      });
-      return;
-    }
-
-    this.onDatacoreReady();
   }
 
   async onClose(): Promise<void> {
-    // Clean up Datacore subscription
-    if (this.updateRef && window.datacore) {
-      window.datacore.core.offref(this.updateRef);
-    }
+    this.disconnectDatacore();
 
-    // Clear debounce timer
+    // Clear timers
+    this.clearRetryInterval();
     if (this.debounceTimer) {
       window.clearTimeout(this.debounceTimer);
     }
@@ -135,84 +174,73 @@ export class TaskBaseView extends ItemView {
     // Clean up TaskList component
     this.taskList?.destroy();
     this.taskList = null;
-
-    // Clean up config watcher (handled by registerEvent automatically)
-  }
-
-  /**
-   * Watch for changes to the config file and auto-reload
-   */
-  private registerConfigWatcher(): void {
-    // Use registerEvent for automatic cleanup on view close
-    this.registerEvent(
-      this.app.vault.on('modify', (file) => {
-        if (this.configFile && file.path === this.configFile.path) {
-          void this.handleConfigChange();
-        }
-      })
-    );
-  }
-
-  private async handleConfigChange(): Promise<void> {
-    console.debug('TaskBase: Config file changed, reloading...');
-    await this.loadConfig();
-    this.refresh();
-  }
-
-  /**
-   * Called when view file changes (e.g., file rename)
-   */
-  async onLoadFile(file: TFile): Promise<void> {
-    this.configFile = file;
-    await this.loadConfig();
-    this.refresh();
-  }
-
-  // ============================================================================
-  // Config Loading
-  // ============================================================================
-
-  private async loadConfig(): Promise<void> {
-    // Get file from leaf state
-    const state = this.leaf.getViewState();
-    const filePath = state.state?.file as string | undefined;
-
-    if (!filePath) {
-      this.showError('No config file specified');
-      return;
-    }
-
-    const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!file || !(file instanceof TFile)) {
-      this.showError(`Config file not found: ${filePath}`);
-      return;
-    }
-
-    this.configFile = file;
-
-    try {
-      const content = await this.app.vault.read(file);
-      const result = parseConfig(content);
-
-      if (!result.success) {
-        this.showError(`Invalid config: ${result.error}`);
-        return;
-      }
-
-      this.config = result.config!;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Unknown error';
-      this.showError(`Failed to read config: ${message}`);
-    }
   }
 
   // ============================================================================
   // Datacore Integration
   // ============================================================================
 
+  private connectDatacore(): void {
+    if (this.updateRef) return; // Already connected
+
+    const dc = window.datacore;
+    if (dc) {
+      // Connect immediately — Datacore's query API works even during indexing.
+      // We don't gate on dc.core.initialized because a Datacore bug with canvas
+      // files can cause initialization to hang indefinitely.
+      this.onDatacoreReady();
+    }
+
+    // Poll until we either find Datacore or get results.
+    // On startup, Datacore may not exist yet (plugin load order) or may exist
+    // but not have indexed files yet (update events may not fire reliably).
+    // Keep polling until we have results, then stop.
+    this.startRetryInterval();
+  }
+
+  private startRetryInterval(): void {
+    if (this.retryInterval) return; // Already polling
+
+    const started = Date.now();
+    this.retryInterval = window.setInterval(() => {
+      if (this.hasResults) {
+        // Got results — stop polling
+        this.clearRetryInterval();
+        return;
+      }
+
+      const dc = window.datacore;
+      if (dc) {
+        if (!this.updateRef) {
+          this.onDatacoreReady();
+        } else {
+          // Already subscribed but no results yet — re-query
+          this.refresh();
+        }
+      } else if (Date.now() - started >= DATACORE_TIMEOUT_MS) {
+        this.clearRetryInterval();
+        this.showError('Datacore plugin is required');
+      }
+    }, DATACORE_POLL_MS);
+  }
+
+  private clearRetryInterval(): void {
+    if (this.retryInterval) {
+      window.clearInterval(this.retryInterval);
+      this.retryInterval = undefined;
+    }
+  }
+
+  private disconnectDatacore(): void {
+    this.clearRetryInterval();
+    if (this.updateRef && window.datacore) {
+      window.datacore.core.offref(this.updateRef);
+      this.updateRef = undefined;
+    }
+  }
+
   private onDatacoreReady(): void {
-    // Initial render
-    this.refresh();
+    if (this.updateRef) return; // Already connected
 
     // Subscribe to updates
     const dc = window.datacore;
@@ -221,6 +249,9 @@ export class TaskBaseView extends ItemView {
         this.scheduleRefresh();
       });
     }
+
+    // Initial render
+    this.refresh();
   }
 
   private scheduleRefresh(): void {
@@ -238,7 +269,7 @@ export class TaskBaseView extends ItemView {
 
   private refresh(): void {
     const dc = window.datacore;
-    if (!dc || !dc.core.initialized) {
+    if (!dc) {
       return;
     }
 
@@ -261,6 +292,12 @@ export class TaskBaseView extends ItemView {
 
     // Sort groups
     const sortedGroups = this.sortGroups(grouped);
+
+    // While still polling for Datacore to finish indexing, don't render
+    // the empty state — keep showing "Loading" so the user sees progress.
+    if (sortedGroups.length === 0 && this.retryInterval) {
+      return;
+    }
 
     // Render
     this.renderTaskList(sortedGroups);
@@ -295,8 +332,6 @@ export class TaskBaseView extends ItemView {
     const direction = sortDirection === 'asc' ? 1 : -1;
 
     entries.sort((a, b) => {
-      // For now, sort by file path
-      // TODO: Support mtime, ctime, custom properties
       if (sortBy === 'file') {
         return direction * a[0].localeCompare(b[0]);
       }
@@ -311,11 +346,44 @@ export class TaskBaseView extends ItemView {
   // ============================================================================
 
   private renderTaskList(groups: Array<[string, TaskItem[]]>): void {
+    if (groups.length > 0) {
+      this.hasResults = true;
+    }
+
     this.loadingEl.hide();
     this.errorEl.hide();
+    this.toolbarEl.show();
     this.taskListEl.show();
 
+    // Update collapsed groups from config
+    this.taskList?.setCollapsedGroups(this.config.view.collapsedGroups ?? []);
+
+    // Render toolbar
+    this.renderToolbar();
+
     this.taskList?.update(groups);
+  }
+
+  private renderToolbar(): void {
+    this.toolbarEl.empty();
+
+    const collapseAllBtn = this.toolbarEl.createEl('button', {
+      cls: 'taskbase-toolbar-btn',
+      attr: { 'aria-label': 'Collapse all groups' }
+    });
+    collapseAllBtn.setText('Collapse all');
+    collapseAllBtn.addEventListener('click', () => {
+      this.taskList?.collapseAll();
+    });
+
+    const expandAllBtn = this.toolbarEl.createEl('button', {
+      cls: 'taskbase-toolbar-btn',
+      attr: { 'aria-label': 'Expand all groups' }
+    });
+    expandAllBtn.setText('Expand all');
+    expandAllBtn.addEventListener('click', () => {
+      this.taskList?.expandAll();
+    });
   }
 
   // ============================================================================
@@ -357,11 +425,43 @@ export class TaskBaseView extends ItemView {
   }
 
   // ============================================================================
+  // Collapse Handlers
+  // ============================================================================
+
+  private handleGroupToggle(filePath: string, collapsed: boolean): void {
+    const set = new Set(this.config.view.collapsedGroups ?? []);
+    if (collapsed) {
+      set.add(filePath);
+    } else {
+      set.delete(filePath);
+    }
+    this.config.view.collapsedGroups = Array.from(set);
+    void this.saveConfig();
+  }
+
+  private handleCollapseAll(): void {
+    this.config.view.collapsedGroups = this.taskList?.getCollapsedGroups() ?? [];
+    void this.saveConfig();
+  }
+
+  private handleExpandAll(): void {
+    this.config.view.collapsedGroups = [];
+    void this.saveConfig();
+  }
+
+  private async saveConfig(): Promise<void> {
+    // Update this.data so TextFileView's save writes the correct content
+    this.data = serializeConfig(this.config);
+    this.requestSave();
+  }
+
+  // ============================================================================
   // Error Display
   // ============================================================================
 
   private showError(message: string): void {
     this.loadingEl.hide();
+    this.toolbarEl.hide();
     this.taskListEl.hide();
     this.errorEl.show();
     this.errorEl.empty();
