@@ -69,11 +69,29 @@ export function buildFilterExpression(filter: PropertyFilter): string {
  * Build the page-level query (file filters)
  */
 export function buildPageQuery(source: TaskBaseSource): string {
+	// If a raw query string is provided, use it directly
+	if (source.query && source.query.trim()) {
+		return `@page and ${source.query.trim()}`;
+	}
+
+	// Legacy: build from folder + filters
+	const conditions = buildLegacyConditions(source);
+
+	if (conditions.length === 0) {
+		return "@page";
+	}
+
+	return `@page and ${conditions.join(" and ")}`;
+}
+
+/**
+ * Build condition strings from legacy folder + filters config
+ */
+function buildLegacyConditions(source: TaskBaseSource): string[] {
 	const conditions: string[] = [];
 
 	// Folder filter
 	if (source.folder && source.folder.trim()) {
-		// Escape quotes in folder path
 		const escapedFolder = source.folder.replace(/"/g, '\\"');
 		conditions.push(`path("${escapedFolder}")`);
 	}
@@ -83,12 +101,16 @@ export function buildPageQuery(source: TaskBaseSource): string {
 		conditions.push(buildFilterExpression(filter));
 	}
 
-	// Combine conditions
-	if (conditions.length === 0) {
-		return "@page";
-	}
+	return conditions;
+}
 
-	return `@page and ${conditions.join(" and ")}`;
+/**
+ * Synthesize a query string from legacy folder + filters config.
+ * Returns just the conditions part (no `@page and` prefix).
+ * Used to populate the QueryBar when opening a legacy config.
+ */
+export function synthesizeQueryFromLegacy(source: TaskBaseSource): string {
+	return buildLegacyConditions(source).join(" and ");
 }
 
 /**

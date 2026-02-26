@@ -27,9 +27,11 @@ export interface PropertyFilter {
  * Source configuration - defines which files to query
  */
 export interface TaskBaseSource {
-	/** Optional folder path to limit scope */
+	/** Raw Datacore page conditions (e.g. `path("Projects") and status = "active"`) */
+	query?: string;
+	/** Optional folder path to limit scope (legacy) */
 	folder?: string;
-	/** Property-based filters */
+	/** Property-based filters (legacy) */
 	filters: PropertyFilter[];
 }
 
@@ -43,6 +45,10 @@ export interface TaskBaseViewConfig {
 	sortBy: string;
 	/** Sort direction */
 	sortDirection: "asc" | "desc";
+	/** File paths of collapsed groups */
+	collapsedGroups?: string[];
+	/** Whether to show bullet points as child items */
+	showBullets?: boolean;
 }
 
 /**
@@ -73,6 +79,8 @@ export const DEFAULT_CONFIG: TaskBaseConfig = {
 		showCompleted: false,
 		sortBy: "file",
 		sortDirection: "desc",
+		collapsedGroups: [],
+		showBullets: false,
 	},
 };
 
@@ -113,6 +121,9 @@ function isValidSource(source: unknown): source is TaskBaseSource {
 	if (typeof source !== "object" || source === null) return false;
 	const s = source as Record<string, unknown>;
 
+	// query is optional but must be string if present
+	if (s.query !== undefined && typeof s.query !== "string") return false;
+
 	// folder is optional but must be string if present
 	if (s.folder !== undefined && typeof s.folder !== "string") return false;
 
@@ -129,12 +140,25 @@ function isValidSource(source: unknown): source is TaskBaseSource {
 function isValidViewConfig(view: unknown): view is TaskBaseViewConfig {
 	if (typeof view !== "object" || view === null) return false;
 	const v = view as Record<string, unknown>;
-	return (
-		typeof v.showCompleted === "boolean" &&
-		typeof v.sortBy === "string" &&
-		typeof v.sortDirection === "string" &&
-		VALID_SORT_DIRECTIONS.includes(v.sortDirection as "asc" | "desc")
-	);
+
+	// Required fields
+	if (typeof v.showCompleted !== "boolean") return false;
+	if (typeof v.sortBy !== "string") return false;
+	if (typeof v.sortDirection !== "string") return false;
+	if (!VALID_SORT_DIRECTIONS.includes(v.sortDirection as "asc" | "desc"))
+		return false;
+
+	// Optional collapsedGroups: must be string array if present
+	if (v.collapsedGroups !== undefined) {
+		if (!Array.isArray(v.collapsedGroups)) return false;
+		if (!v.collapsedGroups.every((g) => typeof g === "string")) return false;
+	}
+
+	// Optional showBullets: must be boolean if present
+	if (v.showBullets !== undefined && typeof v.showBullets !== "boolean")
+		return false;
+
+	return true;
 }
 
 // ============================================================================
@@ -202,6 +226,7 @@ export function mergeWithDefaults(
 	return {
 		version: partial.version ?? DEFAULT_CONFIG.version,
 		source: {
+			query: partial.source?.query,
 			folder: partial.source?.folder ?? DEFAULT_CONFIG.source.folder,
 			filters: partial.source?.filters ?? DEFAULT_CONFIG.source.filters,
 		},
@@ -211,6 +236,10 @@ export function mergeWithDefaults(
 			sortBy: partial.view?.sortBy ?? DEFAULT_CONFIG.view.sortBy,
 			sortDirection:
 				partial.view?.sortDirection ?? DEFAULT_CONFIG.view.sortDirection,
+			collapsedGroups:
+				partial.view?.collapsedGroups ?? DEFAULT_CONFIG.view.collapsedGroups,
+			showBullets:
+				partial.view?.showBullets ?? DEFAULT_CONFIG.view.showBullets,
 		},
 	};
 }

@@ -1,4 +1,5 @@
 import { Plugin, Notice } from "obsidian";
+import { DEFAULT_CONFIG, serializeConfig } from "./config";
 import { TaskBaseView, VIEW_TYPE_TASKBASE } from "./view";
 
 // ============================================================================
@@ -51,6 +52,13 @@ export default class TaskBasePlugin extends Plugin {
 		// Register .taskbase extension
 		this.registerExtensions(["taskbase"], VIEW_TYPE_TASKBASE);
 
+		// Register commands
+		this.addCommand({
+			id: "create-taskbase-file",
+			name: "Create new TaskBase view",
+			callback: () => this.createTaskBaseFile(),
+		});
+
 		// Wait for workspace, then connect to Datacore
 		this.app.workspace.onLayoutReady(() => {
 			this.connectDatacore();
@@ -65,11 +73,7 @@ export default class TaskBasePlugin extends Plugin {
 			return;
 		}
 
-		if (dc.core.initialized) {
-			this.onDatacoreReady();
-		} else {
-			this.initRef = dc.core.on("initialized", () => this.onDatacoreReady());
-		}
+		this.onDatacoreReady();
 	}
 
 	private onDatacoreReady(): void {
@@ -79,6 +83,20 @@ export default class TaskBasePlugin extends Plugin {
 
 	isDatacoreReady(): boolean {
 		return this.datacoreReady;
+	}
+
+	private async createTaskBaseFile(): Promise<void> {
+		const folder = this.app.fileManager.getNewFileParent("");
+		let name = "Untitled.taskbase";
+		let counter = 1;
+		while (this.app.vault.getAbstractFileByPath(`${folder.path === "/" ? "" : folder.path + "/"}${name}`)) {
+			name = `Untitled ${counter}.taskbase`;
+			counter++;
+		}
+		const path = folder.path === "/" ? name : `${folder.path}/${name}`;
+		const file = await this.app.vault.create(path, serializeConfig(DEFAULT_CONFIG));
+		const leaf = this.app.workspace.getLeaf(false);
+		await leaf.openFile(file);
 	}
 
 	onunload(): void {

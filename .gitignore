@@ -9,4 +9,11 @@ node_modules/
 *.code-workspace
 
 # macOS
+CLAUDE.md
+GEMINI.md
 .DS_Store
+.gitignore
+
+# Docs
+docs/
+plans/

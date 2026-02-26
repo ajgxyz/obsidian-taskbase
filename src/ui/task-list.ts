@@ -32,6 +32,12 @@ export interface TaskListCallbacks {
   onTaskClick: (task: TaskItem) => void;
   /** Called when file header is clicked */
   onFileClick: (filePath: string) => void;
+  /** Called when a group is collapsed/expanded */
+  onGroupToggle?: (filePath: string, collapsed: boolean) => void;
+  /** Called when "Collapse All" is clicked */
+  onCollapseAll?: () => void;
+  /** Called when "Expand All" is clicked */
+  onExpandAll?: () => void;
 }
 
 export interface TaskListOptions {
@@ -39,6 +45,10 @@ export interface TaskListOptions {
   showTaskCount?: boolean;
   /** Show file path instead of just name */
   showFullPath?: boolean;
+  /** Set of file paths that are collapsed */
+  collapsedGroups?: Set<string>;
+  /** Show bullet points (non-task list items) as children */
+  showBullets?: boolean;
 }
 
 // ============================================================================
@@ -52,6 +62,7 @@ export class TaskList {
   private options: TaskListOptions;
 
   private groups: TaskGroup[] = [];
+  private collapsedGroups: Set<string>;
 
   constructor(
     app: App,
@@ -65,8 +76,10 @@ export class TaskList {
     this.options = {
       showTaskCount: true,
       showFullPath: false,
+      showBullets: false,
       ...options
     };
+    this.collapsedGroups = options.collapsedGroups ?? new Set();
   }
 
   /**
@@ -141,20 +154,74 @@ export class TaskList {
   }
 
   /**
+   * Render chevron icon using DOM API (avoids innerHTML)
+   */
+  private renderChevronIcon(container: HTMLElement): void {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.classList.add('taskbase-chevron');
+
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', '9 18 15 12 9 6');
+    svg.appendChild(polyline);
+
+    container.appendChild(svg);
+  }
+
+  /**
    * Render a file group
    */
   private renderGroup(group: TaskGroup): void {
+    const isCollapsed = this.collapsedGroups.has(group.filePath);
     const groupEl = this.container.createDiv({ cls: 'taskbase-group' });
+
+    if (isCollapsed) {
+      groupEl.addClass('is-collapsed');
+    }
 
     // Header
     const headerEl = groupEl.createDiv({ cls: 'taskbase-group-header' });
 
-    // File name
+    // Toggle button
+    const toggleEl = headerEl.createEl('button', {
+      cls: 'taskbase-group-toggle',
+      attr: {
+        'aria-label': isCollapsed ? 'Expand group' : 'Collapse group',
+        'aria-expanded': String(!isCollapsed)
+      }
+    });
+    this.renderChevronIcon(toggleEl);
+
+    // Toggle click handler
+    toggleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newCollapsed = !this.collapsedGroups.has(group.filePath);
+      if (newCollapsed) {
+        this.collapsedGroups.add(group.filePath);
+      } else {
+        this.collapsedGroups.delete(group.filePath);
+      }
+      this.callbacks.onGroupToggle?.(group.filePath, newCollapsed);
+      this.render();
+    });
+
+    // File name (clickable to open file)
     const nameEl = headerEl.createSpan({ cls: 'taskbase-group-name' });
     const displayName = this.options.showFullPath
       ? group.filePath.replace(/\.md$/, '')
       : group.fileName;
     nameEl.setText(displayName);
+
+    // File click handler
+    nameEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.callbacks.onFileClick(group.filePath);
+    });
 
     // Task count
     if (this.options.showTaskCount) {
@@ -162,16 +229,13 @@ export class TaskList {
       countEl.setText(`${group.tasks.length}`);
     }
 
-    // Click handler
-    headerEl.addEventListener('click', () => {
-      this.callbacks.onFileClick(group.filePath);
-    });
+    // Task list (only render if not collapsed)
+    if (!isCollapsed) {
+      const listEl = groupEl.createEl('ul', { cls: 'taskbase-task-list' });
 
-    // Task list
-    const listEl = groupEl.createEl('ul', { cls: 'taskbase-task-list' });
-
-    for (const task of group.tasks) {
-      this.renderTask(listEl, task);
+      for (const task of group.tasks) {
+        this.renderTask(listEl, task);
+      }
     }
   }
 
@@ -223,13 +287,48 @@ export class TaskList {
       this.callbacks.onTaskClick(task);
     });
 
-    // Render nested tasks recursively (hierarchical display)
+    // Render nested children recursively (hierarchical display)
     if (task.$elements && task.$elements.length > 0) {
       const nestedList = itemEl.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
       for (const child of task.$elements) {
-        // Only render task children (not plain list items)
         if (this.isTask(child)) {
           this.renderTask(nestedList, child);
+        } else if (this.options.showBullets) {
+          this.renderListItem(nestedList, child);
+        }
+      }
+    }
+  }
+
+  /**
+   * Render a plain list item (bullet point, no checkbox)
+   */
+  private renderListItem(container: HTMLElement, item: TaskItem): void {
+    const itemEl = container.createEl('li', { cls: 'taskbase-list-item' });
+
+    const rowEl = itemEl.createDiv({ cls: 'taskbase-task-row' });
+
+    // Bullet marker instead of checkbox
+    const markerEl = rowEl.createDiv({ cls: 'taskbase-bullet-marker' });
+    markerEl.setText('\u2022');
+
+    // Content
+    const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
+    const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
+    textEl.setText(item.$text);
+
+    contentEl.addEventListener('click', () => {
+      this.callbacks.onTaskClick(item);
+    });
+
+    // Render nested children recursively
+    if (item.$elements && item.$elements.length > 0) {
+      const nestedList = itemEl.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
+      for (const child of item.$elements) {
+        if (this.isTask(child)) {
+          this.renderTask(nestedList, child);
+        } else if (this.options.showBullets) {
+          this.renderListItem(nestedList, child);
         }
       }
     }
@@ -240,6 +339,13 @@ export class TaskList {
    */
   private isTask(item: TaskItem): boolean {
     return typeof item.$completed === 'boolean';
+  }
+
+  /**
+   * Update showBullets option
+   */
+  setShowBullets(value: boolean): void {
+    this.options.showBullets = value;
   }
 
   /**
@@ -283,6 +389,40 @@ export class TaskList {
    */
   getFileCount(): number {
     return this.groups.length;
+  }
+
+  /**
+   * Collapse all groups
+   */
+  collapseAll(): void {
+    for (const group of this.groups) {
+      this.collapsedGroups.add(group.filePath);
+    }
+    this.callbacks.onCollapseAll?.();
+    this.render();
+  }
+
+  /**
+   * Expand all groups
+   */
+  expandAll(): void {
+    this.collapsedGroups.clear();
+    this.callbacks.onExpandAll?.();
+    this.render();
+  }
+
+  /**
+   * Get current collapsed groups
+   */
+  getCollapsedGroups(): string[] {
+    return Array.from(this.collapsedGroups);
+  }
+
+  /**
+   * Update collapsed groups from external source
+   */
+  setCollapsedGroups(groups: string[]): void {
+    this.collapsedGroups = new Set(groups);
   }
 
   /**

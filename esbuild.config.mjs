@@ -10,7 +10,8 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = process.argv[2] === "production";
-const outdir = "/Volumes/Studio/Fabric/.obsidian/plugins/taskbase";
+const devdir = "/Volumes/Core/Sanctuary/Obsidian/.obsidian/plugins/taskbase";
+const outdir = prod ? "." : devdir;
 
 // Ensure output directory exists
 mkdirSync(outdir, { recursive: true });

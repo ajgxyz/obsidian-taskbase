@@ -63,7 +63,7 @@
 
 .taskbase-empty-text {
   color: var(--text-muted);
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
   font-weight: var(--font-semibold);
   margin-bottom: var(--size-4-2);
 }
@@ -71,6 +71,65 @@
 .taskbase-empty-hint {
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
+}
+
+/* ----------------------------------------------------------------------------
+   Toolbar
+   ---------------------------------------------------------------------------- */
+
+.taskbase-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.taskbase-toolbar-btn {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: none;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.taskbase-toolbar-btn:hover {
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.taskbase-toolbar-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------------------
+   Query Bar
+   ---------------------------------------------------------------------------- */
+
+.taskbase-query-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.taskbase-query-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.taskbase-query-input-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.taskbase-query-input {
+  width: 100%;
+  font-family: var(--font-monospace);
 }
 
 /* ----------------------------------------------------------------------------
@@ -92,7 +151,6 @@
   padding: var(--size-4-2) var(--size-4-2);
   margin-bottom: var(--size-4-1);
   border-radius: var(--radius-s);
-  cursor: pointer;
   transition: background-color 100ms ease;
 }
 
@@ -100,13 +158,57 @@
   background: var(--background-modifier-hover);
 }
 
+/* Toggle button */
+.taskbase-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 100ms ease;
+}
+
+.taskbase-group-toggle:hover {
+  color: var(--text-normal);
+}
+
+.taskbase-group-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Chevron icon */
+.taskbase-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 150ms ease;
+  transform: rotate(90deg);
+}
+
+.taskbase-group.is-collapsed .taskbase-chevron {
+  transform: rotate(0deg);
+}
+
 .taskbase-group-name {
+  font-size: var(--font-ui-small);
   font-weight: var(--font-semibold);
   color: var(--text-normal);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.taskbase-group-name:hover {
+  text-decoration: underline;
 }
 
 .taskbase-group-count {
@@ -196,8 +298,39 @@
 
 /* Task text */
 .taskbase-task-text {
+  font-size: var(--font-ui-small);
   color: var(--text-normal);
   word-wrap: break-word;
+}
+
+/* ----------------------------------------------------------------------------
+   Bullet List Item (non-task child)
+   ---------------------------------------------------------------------------- */
+
+.taskbase-list-item {
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  transition: background-color 100ms ease;
+}
+
+.taskbase-list-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.taskbase-bullet-marker {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+/* Reduce nested bullet padding for visual hierarchy */
+.taskbase-nested .taskbase-list-item {
+  padding: var(--size-4-1) 0;
 }
 
 /* Completed state */
@@ -248,8 +381,13 @@
     padding: 0;
   }
 
+  .taskbase-query-bar {
+    display: none;
+  }
+
   .taskbase-group-header:hover,
-  .taskbase-task:hover {
+  .taskbase-task:hover,
+  .taskbase-list-item:hover {
     background: none;
   }
 }
@@ -260,7 +398,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .taskbase-group-header,
-  .taskbase-task {
+  .taskbase-task,
+  .taskbase-list-item,
+  .taskbase-toolbar-btn,
+  .taskbase-group-toggle,
+  .taskbase-chevron {
     transition: none;
   }
 }

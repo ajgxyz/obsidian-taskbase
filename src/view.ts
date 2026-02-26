@@ -5,12 +5,13 @@
  * saving, and change detection for .taskbase JSON config files.
  */
 
-import { TextFileView, WorkspaceLeaf } from 'obsidian';
+import { TextFileView, TFile, WorkspaceLeaf } from 'obsidian';
 import type TaskBasePlugin from './main';
 import { parseConfig, serializeConfig, DEFAULT_CONFIG, type TaskBaseConfig } from './config';
-import { buildQuery } from './query';
+import { buildQuery, synthesizeQueryFromLegacy } from './query';
 import { toggleTask, type ToggleableTask } from './toggle';
 import { TaskList, type TaskItem } from './ui/task-list';
+import { QueryBar } from './ui/query-bar';
 
 // ============================================================================
 // Constants
@@ -53,10 +54,12 @@ export class TaskBaseView extends TextFileView {
   private loadingEl!: HTMLElement;
   private errorEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private queryBarEl!: HTMLElement;
   private taskListEl!: HTMLElement;
 
-  // Task list component
+  // UI components
   private taskList: TaskList | null = null;
+  private queryBar: QueryBar | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: TaskBasePlugin) {
     super(leaf);
@@ -98,6 +101,8 @@ export class TaskBaseView extends TextFileView {
     }
 
     this.config = result.config!;
+    const displayQuery = this.config.source.query ?? synthesizeQueryFromLegacy(this.config.source);
+    this.queryBar?.update(displayQuery);
 
     if (clear) {
       // New file opened — disconnect old Datacore subscription
@@ -125,6 +130,7 @@ export class TaskBaseView extends TextFileView {
     this.loadingEl?.show();
     this.errorEl?.hide();
     this.toolbarEl?.hide();
+    this.queryBarEl?.hide();
     this.taskListEl?.hide();
   }
 
@@ -146,6 +152,13 @@ export class TaskBaseView extends TextFileView {
 
     this.toolbarEl = this.contentEl.createDiv({ cls: 'taskbase-toolbar' });
     this.toolbarEl.hide();
+
+    this.queryBarEl = this.contentEl.createDiv({ cls: 'taskbase-query-bar' });
+    this.queryBarEl.hide();
+
+    this.queryBar = new QueryBar(this.queryBarEl, {
+      onQueryChange: (query) => this.handleQueryChange(query),
+    });
 
     this.taskListEl = this.contentEl.createDiv({ cls: 'taskbase-list' });
     this.taskListEl.hide();
@@ -174,7 +187,9 @@ export class TaskBaseView extends TextFileView {
       window.clearTimeout(this.debounceTimer);
     }
 
-    // Clean up TaskList component
+    // Clean up UI components
+    this.queryBar?.destroy();
+    this.queryBar = null;
     this.taskList?.destroy();
     this.taskList = null;
   }
@@ -286,7 +301,7 @@ export class TaskBaseView extends TextFileView {
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unknown error';
       console.error('TaskBase: Query failed:', message);
-      this.showError(`Query failed: ${message}`);
+      this.showError(`Query failed: ${message}`, true);
       return;
     }
 
@@ -343,14 +358,57 @@ export class TaskBaseView extends TextFileView {
     const { sortBy, sortDirection } = this.config.view;
     const direction = sortDirection === 'asc' ? 1 : -1;
 
+    // Pre-compute sort keys for each group
+    const keys = new Map<string, string | number | null>();
+    for (const [filePath] of entries) {
+      keys.set(filePath, this.getSortKey(filePath, sortBy));
+    }
+
     entries.sort((a, b) => {
-      if (sortBy === 'file') {
-        return direction * a[0].localeCompare(b[0]);
+      const ka = keys.get(a[0]) ?? null;
+      const kb = keys.get(b[0]) ?? null;
+
+      // Nulls always sort to the end
+      if (ka === null && kb === null) return 0;
+      if (ka === null) return 1;
+      if (kb === null) return -1;
+
+      // Compare by type
+      if (typeof ka === 'number' && typeof kb === 'number') {
+        return direction * (ka - kb);
       }
-      return 0;
+      return direction * String(ka).localeCompare(String(kb));
     });
 
     return entries;
+  }
+
+  /**
+   * Get a sort key for a file path based on the sortBy config value.
+   * Returns a string or number for comparison, or null if unavailable.
+   */
+  private getSortKey(filePath: string, sortBy: string): string | number | null {
+    if (sortBy === 'file') {
+      return filePath;
+    }
+
+    const tfile = this.app.vault.getFileByPath(filePath);
+    if (!(tfile instanceof TFile)) return null;
+
+    if (sortBy === 'mtime') {
+      return tfile.stat.mtime;
+    }
+    if (sortBy === 'ctime') {
+      return tfile.stat.ctime;
+    }
+
+    // Custom frontmatter property
+    const cache = this.app.metadataCache.getFileCache(tfile);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- frontmatter values are untyped
+    const value = cache?.frontmatter?.[sortBy];
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'number') return value;
+    return String(value);
   }
 
   // ============================================================================
@@ -361,10 +419,12 @@ export class TaskBaseView extends TextFileView {
     this.loadingEl.hide();
     this.errorEl.hide();
     this.toolbarEl.show();
+    this.queryBarEl.show();
     this.taskListEl.show();
 
-    // Update collapsed groups from config
+    // Update options from config
     this.taskList?.setCollapsedGroups(this.config.view.collapsedGroups ?? []);
+    this.taskList?.setShowBullets(this.config.view.showBullets ?? false);
 
     // Render toolbar
     this.renderToolbar();
@@ -457,6 +517,12 @@ export class TaskBaseView extends TextFileView {
     void this.saveConfig();
   }
 
+  private handleQueryChange(query: string): void {
+    this.config.source = { query: query || undefined, filters: [] };
+    void this.saveConfig();
+    this.refresh();
+  }
+
   private async saveConfig(): Promise<void> {
     // Update this.data so TextFileView's save writes the correct content
     this.data = serializeConfig(this.config);
@@ -467,10 +533,15 @@ export class TaskBaseView extends TextFileView {
   // Error Display
   // ============================================================================
 
-  private showError(message: string): void {
+  private showError(message: string, keepQueryBar = false): void {
     this.loadingEl.hide();
     this.toolbarEl.hide();
     this.taskListEl.hide();
+    if (keepQueryBar) {
+      this.queryBarEl.show();
+    } else {
+      this.queryBarEl.hide();
+    }
     this.errorEl.show();
     this.errorEl.empty();
     this.errorEl.createSpan({ text: message });
