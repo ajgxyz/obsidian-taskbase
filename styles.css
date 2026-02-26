@@ -135,12 +135,18 @@
   font-family: var(--font-monospace);
 }
 
+/* Dirty state — unsaved changes, press Enter to apply */
+.taskbase-query-input.is-dirty {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
 /* ----------------------------------------------------------------------------
    File Groups
    ---------------------------------------------------------------------------- */
 
 .taskbase-group {
-  margin-bottom: var(--size-4-4);
+  margin-bottom: var(--size-4-1);
 }
 
 .taskbase-group:last-child {
@@ -152,7 +158,6 @@
   align-items: center;
   gap: var(--size-4-2);
   padding: var(--size-4-2) var(--size-4-2);
-  margin-bottom: var(--size-4-1);
   border-radius: var(--radius-s);
   transition: background-color 100ms ease;
 }
@@ -343,10 +348,12 @@
   text-decoration: line-through;
 }
 
-/* Inline markdown rendering — strip <p> wrapper added by MarkdownRenderer */
+/* Inline markdown rendering — strip block wrappers added by MarkdownRenderer.
+   !important needed to override Obsidian's base paragraph styles. */
 .taskbase-task-text p {
-  display: inline;
-  margin: 0;
+  display: inline !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 /* Rendered links within task text */
