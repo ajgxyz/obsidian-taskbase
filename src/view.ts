@@ -18,8 +18,9 @@ import { TaskList, type TaskItem } from './ui/task-list';
 
 export const VIEW_TYPE_TASKBASE = 'taskbase-view';
 const DEBOUNCE_MS = 500;
-const DATACORE_POLL_MS = 200;
+const DATACORE_POLL_MS = 500;
 const DATACORE_TIMEOUT_MS = 10_000;
+const STABLE_POLLS_TO_STOP = 5; // 5 × 500ms = 2.5s of stable results before stopping
 
 // ============================================================================
 // Types
@@ -45,7 +46,8 @@ export class TaskBaseView extends TextFileView {
   private updateRef?: EventRef;
   private debounceTimer?: number;
   private retryInterval?: number;
-  private hasResults = false;
+  private lastResultCount = -1;
+  private stablePolls = 0;
 
   // UI containers
   private loadingEl!: HTMLElement;
@@ -118,7 +120,8 @@ export class TaskBaseView extends TextFileView {
   clear(): void {
     this.disconnectDatacore();
     this.config = DEFAULT_CONFIG;
-    this.hasResults = false;
+    this.lastResultCount = -1;
+    this.stablePolls = 0;
     this.loadingEl?.show();
     this.errorEl?.hide();
     this.toolbarEl?.hide();
@@ -203,8 +206,8 @@ export class TaskBaseView extends TextFileView {
 
     const started = Date.now();
     this.retryInterval = window.setInterval(() => {
-      if (this.hasResults) {
-        // Got results — stop polling
+      // Stop once results have stabilized (count > 0 and unchanged for several polls)
+      if (this.lastResultCount > 0 && this.stablePolls >= STABLE_POLLS_TO_STOP) {
         this.clearRetryInterval();
         return;
       }
@@ -214,7 +217,7 @@ export class TaskBaseView extends TextFileView {
         if (!this.updateRef) {
           this.onDatacoreReady();
         } else {
-          // Already subscribed but no results yet — re-query
+          // Already subscribed — re-query to pick up newly indexed files
           this.refresh();
         }
       } else if (Date.now() - started >= DATACORE_TIMEOUT_MS) {
@@ -293,9 +296,18 @@ export class TaskBaseView extends TextFileView {
     // Sort groups
     const sortedGroups = this.sortGroups(grouped);
 
+    // Track result stability — stop polling once the count settles
+    const resultCount = sortedGroups.length;
+    if (resultCount === this.lastResultCount) {
+      this.stablePolls++;
+    } else {
+      this.stablePolls = 0;
+      this.lastResultCount = resultCount;
+    }
+
     // While still polling for Datacore to finish indexing, don't render
     // the empty state — keep showing "Loading" so the user sees progress.
-    if (sortedGroups.length === 0 && this.retryInterval) {
+    if (resultCount === 0 && this.retryInterval) {
       return;
     }
 
@@ -346,10 +358,6 @@ export class TaskBaseView extends TextFileView {
   // ============================================================================
 
   private renderTaskList(groups: Array<[string, TaskItem[]]>): void {
-    if (groups.length > 0) {
-      this.hasResults = true;
-    }
-
     this.loadingEl.hide();
     this.errorEl.hide();
     this.toolbarEl.show();
