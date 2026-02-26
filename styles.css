@@ -74,35 +74,38 @@
 }
 
 /* ----------------------------------------------------------------------------
-   Toolbar
+   Toolbar Buttons (inline in query bar)
    ---------------------------------------------------------------------------- */
 
-.taskbase-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--size-4-2);
-  margin-bottom: var(--size-4-3);
-}
-
 .taskbase-toolbar-btn {
-  padding: var(--size-4-1) var(--size-4-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-s);
-  background: var(--background-modifier-hover);
+  background: transparent;
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
   cursor: pointer;
+  flex-shrink: 0;
   transition: background-color 100ms ease, color 100ms ease;
 }
 
 .taskbase-toolbar-btn:hover {
-  background: var(--background-modifier-border);
+  background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
 .taskbase-toolbar-btn:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+.taskbase-toolbar-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* ----------------------------------------------------------------------------

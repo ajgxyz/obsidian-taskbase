@@ -5,7 +5,7 @@
  * saving, and change detection for .taskbase JSON config files.
  */
 
-import { TextFileView, TFile, WorkspaceLeaf } from 'obsidian';
+import { TextFileView, TFile, WorkspaceLeaf, setIcon } from 'obsidian';
 import type TaskBasePlugin from './main';
 import { parseConfig, serializeConfig, DEFAULT_CONFIG, type TaskBaseConfig } from './config';
 import { buildQuery, synthesizeQueryFromLegacy } from './query';
@@ -53,7 +53,6 @@ export class TaskBaseView extends TextFileView {
   // UI containers
   private loadingEl!: HTMLElement;
   private errorEl!: HTMLElement;
-  private toolbarEl!: HTMLElement;
   private queryBarEl!: HTMLElement;
   private taskListEl!: HTMLElement;
 
@@ -129,7 +128,6 @@ export class TaskBaseView extends TextFileView {
     this.stablePolls = 0;
     this.loadingEl?.show();
     this.errorEl?.hide();
-    this.toolbarEl?.hide();
     this.queryBarEl?.hide();
     this.taskListEl?.hide();
   }
@@ -150,14 +148,30 @@ export class TaskBaseView extends TextFileView {
     this.errorEl = this.contentEl.createDiv({ cls: 'taskbase-error' });
     this.errorEl.hide();
 
-    this.toolbarEl = this.contentEl.createDiv({ cls: 'taskbase-toolbar' });
-    this.toolbarEl.hide();
-
     this.queryBarEl = this.contentEl.createDiv({ cls: 'taskbase-query-bar' });
     this.queryBarEl.hide();
 
     this.queryBar = new QueryBar(this.queryBarEl, {
       onQueryChange: (query) => this.handleQueryChange(query),
+    });
+
+    // Collapse / Expand icon buttons (inside the query bar row)
+    const collapseAllBtn = this.queryBarEl.createEl('button', {
+      cls: 'taskbase-toolbar-btn',
+      attr: { 'aria-label': 'Collapse all groups' }
+    });
+    setIcon(collapseAllBtn, 'chevrons-down-up');
+    collapseAllBtn.addEventListener('click', () => {
+      this.taskList?.collapseAll();
+    });
+
+    const expandAllBtn = this.queryBarEl.createEl('button', {
+      cls: 'taskbase-toolbar-btn',
+      attr: { 'aria-label': 'Expand all groups' }
+    });
+    setIcon(expandAllBtn, 'chevrons-up-down');
+    expandAllBtn.addEventListener('click', () => {
+      this.taskList?.expandAll();
     });
 
     this.taskListEl = this.contentEl.createDiv({ cls: 'taskbase-list' });
@@ -418,7 +432,6 @@ export class TaskBaseView extends TextFileView {
   private renderTaskList(groups: Array<[string, TaskItem[]]>): void {
     this.loadingEl.hide();
     this.errorEl.hide();
-    this.toolbarEl.show();
     this.queryBarEl.show();
     this.taskListEl.show();
 
@@ -426,32 +439,7 @@ export class TaskBaseView extends TextFileView {
     this.taskList?.setCollapsedGroups(this.config.view.collapsedGroups ?? []);
     this.taskList?.setShowBullets(this.config.view.showBullets ?? false);
 
-    // Render toolbar
-    this.renderToolbar();
-
     this.taskList?.update(groups);
-  }
-
-  private renderToolbar(): void {
-    this.toolbarEl.empty();
-
-    const collapseAllBtn = this.toolbarEl.createEl('button', {
-      cls: 'taskbase-toolbar-btn',
-      attr: { 'aria-label': 'Collapse all groups' }
-    });
-    collapseAllBtn.setText('Collapse all');
-    collapseAllBtn.addEventListener('click', () => {
-      this.taskList?.collapseAll();
-    });
-
-    const expandAllBtn = this.toolbarEl.createEl('button', {
-      cls: 'taskbase-toolbar-btn',
-      attr: { 'aria-label': 'Expand all groups' }
-    });
-    expandAllBtn.setText('Expand all');
-    expandAllBtn.addEventListener('click', () => {
-      this.taskList?.expandAll();
-    });
   }
 
   // ============================================================================
@@ -535,7 +523,6 @@ export class TaskBaseView extends TextFileView {
 
   private showError(message: string, keepQueryBar = false): void {
     this.loadingEl.hide();
-    this.toolbarEl.hide();
     this.taskListEl.hide();
     if (keepQueryBar) {
       this.queryBarEl.show();

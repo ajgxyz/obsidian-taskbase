@@ -65,7 +65,7 @@ export class QueryBar {
 
     this.container.createSpan({
       cls: 'taskbase-query-label',
-      text: 'Page filter',
+      text: 'Filter',
     });
 
     const wrapper = this.container.createDiv({ cls: 'taskbase-query-input-wrapper' });
