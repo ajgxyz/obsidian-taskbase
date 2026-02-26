@@ -62,6 +62,12 @@ const context = await esbuild.context({
 
 if (prod) {
 	await context.rebuild();
+	// Also copy to dev vault so builds are immediately testable
+	mkdirSync(devdir, { recursive: true });
+	copyFileSync("main.js", `${devdir}/main.js`);
+	copyFileSync("manifest.json", `${devdir}/manifest.json`);
+	copyFileSync("styles.css", `${devdir}/styles.css`);
+	console.log("Copied build output to dev vault");
 	process.exit(0);
 } else {
 	await context.watch();
