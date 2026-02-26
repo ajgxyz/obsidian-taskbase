@@ -109,6 +109,10 @@ export class TaskList {
     this.component = new Component();
     this.component.load();
 
+    // Preserve scroll position across re-renders (the scrollable element is the parent .taskbase-view)
+    const scrollParent = this.container.parentElement;
+    const scrollTop = scrollParent?.scrollTop ?? 0;
+
     this.container.empty();
 
     if (this.groups.length === 0) {
@@ -118,6 +122,10 @@ export class TaskList {
 
     for (const group of this.groups) {
       this.renderGroup(group);
+    }
+
+    if (scrollParent) {
+      scrollParent.scrollTop = scrollTop;
     }
   }
 
