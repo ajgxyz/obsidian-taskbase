@@ -12,6 +12,7 @@ import { buildQuery, synthesizeQueryFromLegacy } from './query';
 import { toggleTask, type ToggleableTask } from './toggle';
 import { TaskList, type TaskItem } from './ui/task-list';
 import { QueryBar } from './ui/query-bar';
+import { SortDropdown } from './ui/sort-dropdown';
 
 // ============================================================================
 // Constants
@@ -59,6 +60,7 @@ export class TaskBaseView extends TextFileView {
   // UI components
   private taskList: TaskList | null = null;
   private queryBar: QueryBar | null = null;
+  private sortDropdown: SortDropdown | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: TaskBasePlugin) {
     super(leaf);
@@ -102,6 +104,7 @@ export class TaskBaseView extends TextFileView {
     this.config = result.config!;
     const displayQuery = this.config.source.query ?? synthesizeQueryFromLegacy(this.config.source);
     this.queryBar?.update(displayQuery);
+    this.sortDropdown?.update(this.config.view.sortBy, this.config.view.sortDirection);
 
     if (clear) {
       // New file opened — disconnect old Datacore subscription
@@ -155,6 +158,10 @@ export class TaskBaseView extends TextFileView {
       onQueryChange: (query) => this.handleQueryChange(query),
     });
 
+    this.sortDropdown = new SortDropdown(this.queryBarEl, {
+      onSortChange: (sortBy, sortDirection) => this.handleSortChange(sortBy, sortDirection),
+    });
+
     // Collapse / Expand icon buttons (inside the query bar row)
     const collapseAllBtn = this.queryBarEl.createEl('button', {
       cls: 'taskbase-toolbar-btn',
@@ -204,6 +211,8 @@ export class TaskBaseView extends TextFileView {
     // Clean up UI components
     this.queryBar?.destroy();
     this.queryBar = null;
+    this.sortDropdown?.destroy();
+    this.sortDropdown = null;
     this.taskList?.destroy();
     this.taskList = null;
   }
@@ -436,6 +445,7 @@ export class TaskBaseView extends TextFileView {
     this.taskListEl.show();
 
     // Update options from config
+    this.sortDropdown?.update(this.config.view.sortBy, this.config.view.sortDirection);
     this.taskList?.setCollapsedGroups(this.config.view.collapsedGroups ?? []);
     this.taskList?.setShowBullets(this.config.view.showBullets ?? false);
 
@@ -507,6 +517,13 @@ export class TaskBaseView extends TextFileView {
 
   private handleQueryChange(query: string): void {
     this.config.source = { query: query || undefined, filters: [] };
+    void this.saveConfig();
+    this.refresh();
+  }
+
+  private handleSortChange(sortBy: string, sortDirection: 'asc' | 'desc'): void {
+    this.config.view.sortBy = sortBy;
+    this.config.view.sortDirection = sortDirection;
     void this.saveConfig();
     this.refresh();
   }

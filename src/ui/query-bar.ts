@@ -53,11 +53,6 @@ export class QueryBar {
   private render(): void {
     this.container.empty();
 
-    this.container.createSpan({
-      cls: 'taskbase-query-label',
-      text: 'Filter',
-    });
-
     const wrapper = this.container.createDiv({ cls: 'taskbase-query-input-wrapper' });
 
     this.input = new TextComponent(wrapper);
