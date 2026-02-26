@@ -32,6 +32,8 @@ export interface TaskListCallbacks {
   onTaskClick: (task: TaskItem) => void;
   /** Called when file header is clicked */
   onFileClick: (filePath: string) => void;
+  /** Called when an internal link is clicked */
+  onLinkClick?: (href: string, sourcePath: string) => void;
   /** Called when a group is collapsed/expanded */
   onGroupToggle?: (filePath: string, collapsed: boolean) => void;
   /** Called when "Collapse All" is clicked */
@@ -376,14 +378,14 @@ export class TaskList {
       const href = target.getAttribute('data-href') ?? target.getAttribute('href');
       if (!href) return;
 
-      if (target.hasAttribute('data-href')) {
-        // Internal wiki link — open via Obsidian
-        void this.app.workspace.openLinkText(href, sourcePath);
-      } else if (href.startsWith('http://') || href.startsWith('https://')) {
+      if (href.startsWith('http://') || href.startsWith('https://')) {
         // External link — open in browser
         window.open(href, '_blank');
+      } else if (this.callbacks.onLinkClick) {
+        // Delegate internal link navigation to the view
+        this.callbacks.onLinkClick(href, sourcePath);
       } else {
-        // Other internal link
+        // Fallback — open via Obsidian directly
         void this.app.workspace.openLinkText(href, sourcePath);
       }
     });

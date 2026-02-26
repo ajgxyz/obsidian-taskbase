@@ -192,6 +192,7 @@ export class TaskBaseView extends TextFileView {
         onToggle: (task) => { void this.handleToggle(task); },
         onTaskClick: (task) => this.handleTaskClick(task),
         onFileClick: (filePath) => this.handleFileClick(filePath),
+        onLinkClick: (href, sourcePath) => this.handleLinkClick(href, sourcePath),
         onGroupToggle: (filePath, collapsed) => this.handleGroupToggle(filePath, collapsed),
         onCollapseAll: () => this.handleCollapseAll(),
         onExpandAll: () => this.handleExpandAll()
@@ -457,16 +458,54 @@ export class TaskBaseView extends TextFileView {
   // ============================================================================
 
   private handleTaskClick(task: TaskItem): void {
-    void this.app.workspace.openLinkText(
-      task.$file,
-      '',
-      false,
-      { eState: { line: task.$line } }
-    );
+    if (this.isInSidebar()) {
+      const leaf = this.app.workspace.getLeaf('tab');
+      void leaf.openFile(
+        this.app.vault.getFileByPath(task.$file) as TFile,
+        { eState: { line: task.$line } }
+      );
+    } else {
+      void this.app.workspace.openLinkText(
+        task.$file,
+        '',
+        false,
+        { eState: { line: task.$line } }
+      );
+    }
   }
 
   private handleFileClick(filePath: string): void {
-    void this.app.workspace.openLinkText(filePath, '', false);
+    if (this.isInSidebar()) {
+      const leaf = this.app.workspace.getLeaf('tab');
+      void leaf.openFile(
+        this.app.vault.getFileByPath(filePath) as TFile
+      );
+    } else {
+      void this.app.workspace.openLinkText(filePath, '', false);
+    }
+  }
+
+  private handleLinkClick(href: string, sourcePath: string): void {
+    if (this.isInSidebar()) {
+      const file = this.app.metadataCache.getFirstLinkpathDest(href, sourcePath);
+      if (file) {
+        const leaf = this.app.workspace.getLeaf('tab');
+        void leaf.openFile(file);
+      } else {
+        // File doesn't exist yet — fall back to openLinkText which can create it
+        void this.app.workspace.openLinkText(href, sourcePath, true);
+      }
+    } else {
+      void this.app.workspace.openLinkText(href, sourcePath);
+    }
+  }
+
+  /**
+   * Check if this view's leaf is in a sidebar (not the main editor split).
+   */
+  private isInSidebar(): boolean {
+    const root = this.leaf.getRoot();
+    return root !== this.app.workspace.rootSplit;
   }
 
   // ============================================================================
