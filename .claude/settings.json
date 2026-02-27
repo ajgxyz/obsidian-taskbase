@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "MCP(mcp__plugin_linear_linear__*)"
+    ]
+  },
+  "enabledPlugins": {
+    "linear@claude-plugins-official": true
+  }
+}
