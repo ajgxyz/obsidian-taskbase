@@ -1,5 +1,10 @@
 /**
- * TaskList component - renders grouped tasks
+ * TaskList component - renders grouped tasks with diff-based DOM updates
+ *
+ * Instead of tearing down and rebuilding the entire DOM on every refresh,
+ * this component tracks existing DOM nodes and only updates what changed.
+ * For the common case (checkbox toggle), this means flipping one class and
+ * one checkbox — no markdown re-rendering, no DOM teardown.
  */
 
 import { App, Component, MarkdownRenderer } from 'obsidian';
@@ -54,6 +59,36 @@ export interface TaskListOptions {
 }
 
 // ============================================================================
+// Internal State Tracking
+// ============================================================================
+
+/** Tracks a single task or bullet item's DOM nodes and data for diffing */
+interface TaskNodeState {
+  el: HTMLElement;
+  /** Mutable reference to current task data — event handlers read from this */
+  task: TaskItem;
+  completed: boolean;
+  text: string;
+  checkboxEl: HTMLInputElement | null;
+  textEl: HTMLElement;
+  /** Per-item component for MarkdownRenderer lifecycle */
+  markdownComponent: Component;
+  childListEl: HTMLElement | null;
+  childNodes: Map<number, TaskNodeState>;
+  isBullet: boolean;
+}
+
+/** Tracks a file group's DOM nodes and child task states */
+interface GroupNodeState {
+  el: HTMLElement;
+  toggleEl: HTMLElement;
+  countEl: HTMLElement | null;
+  listEl: HTMLElement | null;
+  collapsed: boolean;
+  taskNodes: Map<number, TaskNodeState>;
+}
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -65,7 +100,9 @@ export class TaskList {
 
   private groups: TaskGroup[] = [];
   private collapsedGroups: Set<string>;
-  private component: Component;
+
+  /** Keyed group DOM state for diff-based updates */
+  private groupNodes = new Map<string, GroupNodeState>();
 
   constructor(
     app: App,
@@ -83,8 +120,6 @@ export class TaskList {
       ...options
     };
     this.collapsedGroups = options.collapsedGroups ?? new Set();
-    this.component = new Component();
-    this.component.load();
   }
 
   /**
@@ -101,27 +136,55 @@ export class TaskList {
     this.render();
   }
 
+  // ============================================================================
+  // Diff-based Rendering
+  // ============================================================================
+
   /**
-   * Render the task list
+   * Render the task list using diff-based DOM updates.
+   * Reuses existing DOM nodes where possible, only updating what changed.
    */
   private render(): void {
-    this.component.unload();
-    this.component = new Component();
-    this.component.load();
-
-    // Preserve scroll position across re-renders (the scrollable element is the parent .taskbase-view)
+    // Preserve scroll position (the scrollable element is the parent .taskbase-view)
     const scrollParent = this.container.parentElement;
     const scrollTop = scrollParent?.scrollTop ?? 0;
 
-    this.container.empty();
-
     if (this.groups.length === 0) {
+      this.clearAllNodes();
+      this.container.empty();
       this.renderEmpty();
       return;
     }
 
+    // Remove empty state if present
+    this.container.querySelector('.taskbase-empty')?.remove();
+
+    // Remove groups that no longer exist
+    const currentPaths = new Set(this.groups.map(g => g.filePath));
+    for (const [path, node] of this.groupNodes) {
+      if (!currentPaths.has(path)) {
+        this.destroyGroupNode(node);
+        this.groupNodes.delete(path);
+      }
+    }
+
+    // Update existing groups or create new ones
     for (const group of this.groups) {
-      this.renderGroup(group);
+      const existing = this.groupNodes.get(group.filePath);
+      if (existing) {
+        this.updateGroupNode(existing, group);
+      } else {
+        const node = this.createGroupNode(group);
+        this.groupNodes.set(group.filePath, node);
+      }
+    }
+
+    // Ensure DOM order matches data order (appendChild moves existing elements)
+    for (const group of this.groups) {
+      const node = this.groupNodes.get(group.filePath);
+      if (node) {
+        this.container.appendChild(node.el);
+      }
     }
 
     if (scrollParent) {
@@ -129,9 +192,301 @@ export class TaskList {
     }
   }
 
-  /**
-   * Render empty state
-   */
+  // ============================================================================
+  // Group Nodes
+  // ============================================================================
+
+  private createGroupNode(group: TaskGroup): GroupNodeState {
+    const isCollapsed = this.collapsedGroups.has(group.filePath);
+    const el = document.createElement('div');
+    el.className = 'taskbase-group';
+    if (isCollapsed) el.classList.add('is-collapsed');
+
+    // Header
+    const headerEl = el.createDiv({ cls: 'taskbase-group-header' });
+
+    // Toggle button
+    const toggleEl = headerEl.createEl('button', {
+      cls: 'taskbase-group-toggle',
+      attr: {
+        'aria-label': isCollapsed ? 'Expand group' : 'Collapse group',
+        'aria-expanded': String(!isCollapsed)
+      }
+    });
+    this.renderChevronIcon(toggleEl);
+
+    const filePath = group.filePath;
+    toggleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newCollapsed = !this.collapsedGroups.has(filePath);
+      if (newCollapsed) {
+        this.collapsedGroups.add(filePath);
+      } else {
+        this.collapsedGroups.delete(filePath);
+      }
+      this.callbacks.onGroupToggle?.(filePath, newCollapsed);
+      this.render();
+    });
+
+    // File name
+    const nameEl = headerEl.createSpan({ cls: 'taskbase-group-name' });
+    const displayName = this.options.showFullPath
+      ? filePath.replace(/\.md$/, '')
+      : group.fileName;
+    nameEl.setText(displayName);
+
+    nameEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.callbacks.onFileClick(filePath);
+    });
+
+    // Task count
+    let countEl: HTMLElement | null = null;
+    if (this.options.showTaskCount) {
+      countEl = headerEl.createSpan({ cls: 'taskbase-group-count' });
+      countEl.setText(`${group.tasks.length}`);
+    }
+
+    // Task list (only if expanded)
+    const taskNodes = new Map<number, TaskNodeState>();
+    let listEl: HTMLElement | null = null;
+    if (!isCollapsed) {
+      listEl = el.createEl('ul', { cls: 'taskbase-task-list' });
+      for (const task of group.tasks) {
+        const taskNode = this.createTaskNode(listEl, task);
+        taskNodes.set(task.$line, taskNode);
+      }
+    }
+
+    return { el, toggleEl, countEl, listEl, collapsed: isCollapsed, taskNodes };
+  }
+
+  private updateGroupNode(node: GroupNodeState, group: TaskGroup): void {
+    const isCollapsed = this.collapsedGroups.has(group.filePath);
+
+    // Handle collapse/expand state change
+    if (isCollapsed !== node.collapsed) {
+      node.collapsed = isCollapsed;
+      if (isCollapsed) {
+        node.el.classList.add('is-collapsed');
+        if (node.listEl) {
+          for (const [, taskNode] of node.taskNodes) {
+            this.destroyTaskNode(taskNode);
+          }
+          node.taskNodes.clear();
+          node.listEl.remove();
+          node.listEl = null;
+        }
+      } else {
+        node.el.classList.remove('is-collapsed');
+        node.listEl = node.el.createEl('ul', { cls: 'taskbase-task-list' });
+        for (const task of group.tasks) {
+          const taskNode = this.createTaskNode(node.listEl, task);
+          node.taskNodes.set(task.$line, taskNode);
+        }
+      }
+      node.toggleEl.setAttribute('aria-label', isCollapsed ? 'Expand group' : 'Collapse group');
+      node.toggleEl.setAttribute('aria-expanded', String(!isCollapsed));
+    }
+
+    // Update count
+    if (node.countEl) {
+      node.countEl.setText(`${group.tasks.length}`);
+    }
+
+    // Diff tasks (only if expanded)
+    if (!isCollapsed && node.listEl) {
+      this.diffTaskList(node.listEl, node.taskNodes, group.tasks);
+    }
+  }
+
+  private destroyGroupNode(node: GroupNodeState): void {
+    for (const [, taskNode] of node.taskNodes) {
+      this.destroyTaskNode(taskNode);
+    }
+    node.el.remove();
+  }
+
+  // ============================================================================
+  // Task Node Diffing
+  // ============================================================================
+
+  private diffTaskList(
+    listEl: HTMLElement,
+    taskNodes: Map<number, TaskNodeState>,
+    tasks: TaskItem[]
+  ): void {
+    // Remove tasks that no longer exist
+    const currentLines = new Set(tasks.map(t => t.$line));
+    for (const [line, taskNode] of taskNodes) {
+      if (!currentLines.has(line)) {
+        this.destroyTaskNode(taskNode);
+        taskNodes.delete(line);
+      }
+    }
+
+    // Update existing or create new tasks
+    for (const task of tasks) {
+      const existing = taskNodes.get(task.$line);
+      if (existing) {
+        this.updateTaskNode(existing, task);
+      } else {
+        const taskNode = this.createTaskNode(listEl, task);
+        taskNodes.set(task.$line, taskNode);
+      }
+    }
+
+    // Ensure DOM order matches data order
+    for (const task of tasks) {
+      const taskNode = taskNodes.get(task.$line);
+      if (taskNode) {
+        listEl.appendChild(taskNode.el);
+      }
+    }
+  }
+
+  // ============================================================================
+  // Task Nodes
+  // ============================================================================
+
+  private createTaskNode(container: HTMLElement, task: TaskItem): TaskNodeState {
+    const isBullet = !this.isTask(task);
+    const el = container.createEl('li', { cls: isBullet ? 'taskbase-list-item' : 'taskbase-task' });
+
+    if (!isBullet && task.$completed) {
+      el.classList.add('is-completed');
+    }
+
+    const rowEl = el.createDiv({ cls: 'taskbase-task-row' });
+
+    // State object — event handlers capture this mutable reference
+    const markdownComponent = new Component();
+    markdownComponent.load();
+    const state: TaskNodeState = {
+      el, task, completed: task.$completed, text: task.$text,
+      checkboxEl: null, textEl: null!,
+      markdownComponent,
+      childListEl: null, childNodes: new Map(), isBullet
+    };
+
+    if (isBullet) {
+      const markerEl = rowEl.createDiv({ cls: 'taskbase-bullet-marker' });
+      markerEl.setText('\u2022');
+    } else {
+      const checkboxWrapper = rowEl.createDiv({ cls: 'taskbase-checkbox-wrapper' });
+      const checkboxEl: HTMLInputElement = checkboxWrapper.createEl('input', {
+        type: 'checkbox',
+        cls: 'taskbase-checkbox',
+        attr: { 'aria-label': `Toggle task: ${task.$text.substring(0, 50)}` }
+      });
+      checkboxEl.checked = task.$completed;
+      checkboxEl.addEventListener('click', (e) => e.stopPropagation());
+      // Handler reads state.task so it always has the latest data
+      checkboxEl.addEventListener('change', () => this.callbacks.onToggle(state.task));
+      state.checkboxEl = checkboxEl;
+    }
+
+    // Content
+    const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
+    const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
+    state.textEl = textEl;
+    void MarkdownRenderer.render(this.app, task.$text, textEl, task.$file, markdownComponent);
+    this.attachLinkHandler(textEl, task.$file);
+
+    contentEl.addEventListener('click', () => this.callbacks.onTaskClick(state.task));
+
+    // Nested children
+    const children = this.getVisibleChildren(task);
+    if (children.length > 0) {
+      state.childListEl = el.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
+      for (const child of children) {
+        const childNode = this.createTaskNode(state.childListEl, child);
+        state.childNodes.set(child.$line, childNode);
+      }
+    }
+
+    return state;
+  }
+
+  private updateTaskNode(node: TaskNodeState, task: TaskItem): void {
+    // Update task reference so event handlers see latest data
+    node.task = task;
+
+    // Update completed state (checkbox + CSS class)
+    if (!node.isBullet && task.$completed !== node.completed) {
+      node.completed = task.$completed;
+      if (task.$completed) {
+        node.el.classList.add('is-completed');
+      } else {
+        node.el.classList.remove('is-completed');
+      }
+      if (node.checkboxEl) {
+        node.checkboxEl.checked = task.$completed;
+      }
+    }
+
+    // Re-render markdown only if text actually changed
+    if (task.$text !== node.text) {
+      node.text = task.$text;
+      node.markdownComponent.unload();
+      node.markdownComponent = new Component();
+      node.markdownComponent.load();
+      node.textEl.empty();
+      void MarkdownRenderer.render(
+        this.app, task.$text, node.textEl, task.$file, node.markdownComponent
+      );
+      // Link handler is on textEl itself using event delegation — still works
+    }
+
+    // Diff children
+    const children = this.getVisibleChildren(task);
+    if (children.length > 0) {
+      if (!node.childListEl) {
+        node.childListEl = node.el.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
+      }
+      this.diffTaskList(node.childListEl, node.childNodes, children);
+    } else if (node.childListEl) {
+      for (const [, childNode] of node.childNodes) {
+        this.destroyTaskNode(childNode);
+      }
+      node.childNodes.clear();
+      node.childListEl.remove();
+      node.childListEl = null;
+    }
+  }
+
+  private destroyTaskNode(node: TaskNodeState): void {
+    node.markdownComponent.unload();
+    for (const [, child] of node.childNodes) {
+      this.destroyTaskNode(child);
+    }
+    node.el.remove();
+  }
+
+  private clearAllNodes(): void {
+    for (const [, groupNode] of this.groupNodes) {
+      this.destroyGroupNode(groupNode);
+    }
+    this.groupNodes.clear();
+  }
+
+  // ============================================================================
+  // Helpers
+  // ============================================================================
+
+  private getVisibleChildren(task: TaskItem): TaskItem[] {
+    if (!task.$elements || task.$elements.length === 0) return [];
+    return task.$elements.filter(child => this.isTask(child) || this.options.showBullets);
+  }
+
+  private isTask(item: TaskItem): boolean {
+    return typeof item.$completed === 'boolean';
+  }
+
+  // ============================================================================
+  // Static Rendering (empty state, icons)
+  // ============================================================================
+
   private renderEmpty(): void {
     const emptyEl = this.container.createDiv({ cls: 'taskbase-empty' });
 
@@ -145,9 +500,6 @@ export class TaskList {
     hintEl.setText('Adjust your filters or add tasks to matching files');
   }
 
-  /**
-   * Render check circle icon using DOM API (avoids innerHTML)
-   */
   private renderCheckIcon(container: HTMLElement): void {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', '48');
@@ -170,9 +522,6 @@ export class TaskList {
     container.appendChild(svg);
   }
 
-  /**
-   * Render chevron icon using DOM API (avoids innerHTML)
-   */
   private renderChevronIcon(container: HTMLElement): void {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -191,189 +540,9 @@ export class TaskList {
   }
 
   /**
-   * Render a file group
-   */
-  private renderGroup(group: TaskGroup): void {
-    const isCollapsed = this.collapsedGroups.has(group.filePath);
-    const groupEl = this.container.createDiv({ cls: 'taskbase-group' });
-
-    if (isCollapsed) {
-      groupEl.addClass('is-collapsed');
-    }
-
-    // Header
-    const headerEl = groupEl.createDiv({ cls: 'taskbase-group-header' });
-
-    // Toggle button
-    const toggleEl = headerEl.createEl('button', {
-      cls: 'taskbase-group-toggle',
-      attr: {
-        'aria-label': isCollapsed ? 'Expand group' : 'Collapse group',
-        'aria-expanded': String(!isCollapsed)
-      }
-    });
-    this.renderChevronIcon(toggleEl);
-
-    // Toggle click handler
-    toggleEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const newCollapsed = !this.collapsedGroups.has(group.filePath);
-      if (newCollapsed) {
-        this.collapsedGroups.add(group.filePath);
-      } else {
-        this.collapsedGroups.delete(group.filePath);
-      }
-      this.callbacks.onGroupToggle?.(group.filePath, newCollapsed);
-      this.render();
-    });
-
-    // File name (clickable to open file)
-    const nameEl = headerEl.createSpan({ cls: 'taskbase-group-name' });
-    const displayName = this.options.showFullPath
-      ? group.filePath.replace(/\.md$/, '')
-      : group.fileName;
-    nameEl.setText(displayName);
-
-    // File click handler
-    nameEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.callbacks.onFileClick(group.filePath);
-    });
-
-    // Task count
-    if (this.options.showTaskCount) {
-      const countEl = headerEl.createSpan({ cls: 'taskbase-group-count' });
-      countEl.setText(`${group.tasks.length}`);
-    }
-
-    // Task list (only render if not collapsed)
-    if (!isCollapsed) {
-      const listEl = groupEl.createEl('ul', { cls: 'taskbase-task-list' });
-
-      for (const task of group.tasks) {
-        this.renderTask(listEl, task);
-      }
-    }
-  }
-
-  /**
-   * Render a single task (and its children recursively)
-   * See [[Research - Nested Tasks Behavior]] for hierarchy details
-   */
-  private renderTask(container: HTMLElement, task: TaskItem): void {
-    const itemEl = container.createEl('li', { cls: 'taskbase-task' });
-
-    if (task.$completed) {
-      itemEl.addClass('is-completed');
-    }
-
-    // Row container for checkbox + content (allows nested list to flow below)
-    const rowEl = itemEl.createDiv({ cls: 'taskbase-task-row' });
-
-    // Checkbox wrapper (for better click target)
-    const checkboxWrapper = rowEl.createDiv({ cls: 'taskbase-checkbox-wrapper' });
-
-    // Checkbox with accessibility label
-    const checkboxEl = checkboxWrapper.createEl('input', {
-      type: 'checkbox',
-      cls: 'taskbase-checkbox',
-      attr: {
-        'aria-label': `Toggle task: ${task.$text.substring(0, 50)}`
-      }
-    });
-    checkboxEl.checked = task.$completed;
-
-    // Prevent double-firing
-    checkboxEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
-
-    checkboxEl.addEventListener('change', () => {
-      this.callbacks.onToggle(task);
-    });
-
-    // Task content
-    const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
-
-    // Task text — render inline markdown (bold, italic, links)
-    const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
-    void MarkdownRenderer.render(
-      this.app, task.$text, textEl, task.$file, this.component
-    );
-    this.attachLinkHandler(textEl, task.$file);
-
-    // Click handler for text (only fires if click wasn't on a link)
-    contentEl.addEventListener('click', () => {
-      this.callbacks.onTaskClick(task);
-    });
-
-    // Render nested children recursively (hierarchical display)
-    if (task.$elements && task.$elements.length > 0) {
-      const nestedList = itemEl.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
-      for (const child of task.$elements) {
-        if (this.isTask(child)) {
-          this.renderTask(nestedList, child);
-        } else if (this.options.showBullets) {
-          this.renderListItem(nestedList, child);
-        }
-      }
-    }
-  }
-
-  /**
-   * Render a plain list item (bullet point, no checkbox)
-   */
-  private renderListItem(container: HTMLElement, item: TaskItem): void {
-    const itemEl = container.createEl('li', { cls: 'taskbase-list-item' });
-
-    const rowEl = itemEl.createDiv({ cls: 'taskbase-task-row' });
-
-    // Bullet marker instead of checkbox
-    const markerEl = rowEl.createDiv({ cls: 'taskbase-bullet-marker' });
-    markerEl.setText('\u2022');
-
-    // Content — render inline markdown (bold, italic, links)
-    const contentEl = rowEl.createDiv({ cls: 'taskbase-task-content' });
-    const textEl = contentEl.createSpan({ cls: 'taskbase-task-text' });
-    void MarkdownRenderer.render(
-      this.app, item.$text, textEl, item.$file, this.component
-    );
-    this.attachLinkHandler(textEl, item.$file);
-
-    contentEl.addEventListener('click', () => {
-      this.callbacks.onTaskClick(item);
-    });
-
-    // Render nested children recursively
-    if (item.$elements && item.$elements.length > 0) {
-      const nestedList = itemEl.createEl('ul', { cls: 'taskbase-task-list taskbase-nested' });
-      for (const child of item.$elements) {
-        if (this.isTask(child)) {
-          this.renderTask(nestedList, child);
-        } else if (this.options.showBullets) {
-          this.renderListItem(nestedList, child);
-        }
-      }
-    }
-  }
-
-  /**
-   * Check if a list item is a task (has checkbox)
-   */
-  private isTask(item: TaskItem): boolean {
-    return typeof item.$completed === 'boolean';
-  }
-
-  /**
-   * Update showBullets option
-   */
-  setShowBullets(value: boolean): void {
-    this.options.showBullets = value;
-  }
-
-  /**
    * Attach click handler to rendered links so they open targets
    * instead of triggering the parent task-click handler.
+   * Uses event delegation so it works across markdown re-renders.
    */
   private attachLinkHandler(textEl: HTMLElement, sourcePath: string): void {
     textEl.addEventListener('click', (e) => {
@@ -387,30 +556,29 @@ export class TaskList {
       if (!href) return;
 
       if (href.startsWith('http://') || href.startsWith('https://')) {
-        // External link — open in browser
         window.open(href, '_blank');
       } else if (this.callbacks.onLinkClick) {
-        // Delegate internal link navigation to the view
         this.callbacks.onLinkClick(href, sourcePath);
       } else {
-        // Fallback — open via Obsidian directly
         void this.app.workspace.openLinkText(href, sourcePath);
       }
     });
   }
 
-  /**
-   * Extract file name from path
-   */
   private extractFileName(filePath: string): string {
     const parts = filePath.split('/');
     const fileName = parts[parts.length - 1] || filePath;
     return fileName.replace(/\.md$/, '');
   }
 
-  /**
-   * Get total task count (including nested tasks)
-   */
+  // ============================================================================
+  // Public API
+  // ============================================================================
+
+  setShowBullets(value: boolean): void {
+    this.options.showBullets = value;
+  }
+
   getTaskCount(): number {
     let count = 0;
     for (const group of this.groups) {
@@ -419,15 +587,11 @@ export class TaskList {
     return count;
   }
 
-  /**
-   * Recursively count tasks including nested children
-   */
   private countTasksRecursive(tasks: TaskItem[]): number {
     let count = 0;
     for (const task of tasks) {
-      count++; // Count this task
+      count++;
       if (task.$elements && task.$elements.length > 0) {
-        // Count nested tasks
         const nestedTasks = task.$elements.filter(item => this.isTask(item));
         count += this.countTasksRecursive(nestedTasks);
       }
@@ -435,16 +599,10 @@ export class TaskList {
     return count;
   }
 
-  /**
-   * Get file count
-   */
   getFileCount(): number {
     return this.groups.length;
   }
 
-  /**
-   * Collapse all groups
-   */
   collapseAll(): void {
     for (const group of this.groups) {
       this.collapsedGroups.add(group.filePath);
@@ -453,34 +611,22 @@ export class TaskList {
     this.render();
   }
 
-  /**
-   * Expand all groups
-   */
   expandAll(): void {
     this.collapsedGroups.clear();
     this.callbacks.onExpandAll?.();
     this.render();
   }
 
-  /**
-   * Get current collapsed groups
-   */
   getCollapsedGroups(): string[] {
     return Array.from(this.collapsedGroups);
   }
 
-  /**
-   * Update collapsed groups from external source
-   */
   setCollapsedGroups(groups: string[]): void {
     this.collapsedGroups = new Set(groups);
   }
 
-  /**
-   * Destroy and clean up
-   */
   destroy(): void {
-    this.component.unload();
+    this.clearAllNodes();
     this.container.empty();
     this.groups = [];
   }
