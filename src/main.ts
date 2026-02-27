@@ -49,8 +49,18 @@ export default class TaskBasePlugin extends Plugin {
 			(leaf) => new TaskBaseView(leaf, this),
 		);
 
-		// Register .taskbase extension
-		this.registerExtensions(["taskbase"], VIEW_TYPE_TASKBASE);
+		// Register .taskbase extension.
+		// Wrap in try/catch: registerExtensions throws if the extension is already
+		// claimed (e.g. stale registration from a previous plugin load). If that
+		// happens, force-unregister the stale mapping and retry.
+		try {
+			this.registerExtensions(["taskbase"], VIEW_TYPE_TASKBASE);
+		} catch {
+			// @ts-expect-error -- internal API, not in public type definitions
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+			this.app.viewRegistry.unregisterExtensions(["taskbase"]);
+			this.registerExtensions(["taskbase"], VIEW_TYPE_TASKBASE);
+		}
 
 		// Register commands
 		this.addCommand({
@@ -104,5 +114,12 @@ export default class TaskBasePlugin extends Plugin {
 		if (window.datacore && this.initRef) {
 			window.datacore.core.offref(this.initRef);
 		}
+
+		// Obsidian's public API has no unregisterExtensions. Without this,
+		// the .taskbase extension stays registered in the viewRegistry after
+		// plugin disable/reload, blocking re-registration on next load.
+		// @ts-expect-error -- internal API, not in public type definitions
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+		this.app.viewRegistry.unregisterExtensions(["taskbase"]);
 	}
 }
